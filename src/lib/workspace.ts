@@ -1,0 +1,120 @@
+import { z } from "zod";
+
+export const STORAGE_KEY = "folio.workspace.v1";
+export const symbolSchema = z.string().trim().toUpperCase().regex(/^[A-Z][A-Z0-9.^=-]{0,14}$/, "Enter a valid ticker, such as AAPL or BRK-B");
+export const widgetTypes = ["watchlist", "chart", "quote", "movers", "market", "news", "earnings", "notes"] as const;
+export type WidgetType = typeof widgetTypes[number];
+export const ranges = ["1d", "1mo", "3mo", "1y", "5y"] as const;
+export type Range = typeof ranges[number];
+export const widgetCatalog: Record<WidgetType, { name: string; description: string; category: string }> = {
+  watchlist: { name: "Watchlist", description: "Your symbols, prices, and daily performance in one place.", category: "Markets" },
+  chart: { name: "Price chart", description: "Explore price history from one day to five years.", category: "Markets" },
+  quote: { name: "Key statistics", description: "A focused view of price, volume, and trading ranges.", category: "Markets" },
+  movers: { name: "Daily movers", description: "Find the biggest moves within your selected watchlist.", category: "Markets" },
+  market: { name: "Market overview", description: "Track broad markets with a set of benchmark ETFs.", category: "Markets" },
+  news: { name: "News feed", description: "The latest headlines for the companies you follow.", category: "Research" },
+  earnings: { name: "Earnings calendar", description: "Company reporting schedules by day.", category: "Research" },
+  notes: { name: "Research notes", description: "Keep your thesis, questions, and next steps close.", category: "Research" },
+};
+const idSchema = z.string().min(1).max(80).regex(/^[a-zA-Z0-9_-]+$/);
+export const widgetSchema = z.object({
+  id: idSchema,
+  type: z.enum(widgetTypes),
+  title: z.string().max(80),
+  symbol: symbolSchema.default("AAPL"),
+  followSymbol: z.boolean().default(true),
+  range: z.enum(ranges).default("1mo"),
+  watchlistId: idSchema.default("core"),
+  sort: z.enum(["symbol", "change", "price"]).default("symbol"),
+  direction: z.enum(["gainers", "losers"]).default("gainers"),
+  showVolume: z.boolean().default(true),
+  showChart: z.boolean().default(true),
+  limit: z.number().int().min(1).max(20).default(8),
+});
+export type Widget = z.infer<typeof widgetSchema>;
+export const layoutItemSchema = z.object({
+  i: idSchema,
+  x: z.number().int().min(0).max(11),
+  y: z.number().int().min(0).max(10000),
+  w: z.number().int().min(2).max(12),
+  h: z.number().int().min(3).max(30),
+}).refine(item => item.x + item.w <= 12, "Widget extends outside the grid");
+export type LayoutItem = z.infer<typeof layoutItemSchema>;
+export const pageSchema = z.object({
+  id: idSchema,
+  name: z.string().trim().min(1).max(60),
+  widgets: z.array(widgetSchema).max(30),
+  layout: z.array(layoutItemSchema).max(30),
+}).superRefine((page, ctx) => {
+  const ids = page.widgets.map(w => w.id);
+  if (new Set(ids).size !== ids.length || new Set(page.layout.map(l => l.i)).size !== page.layout.length || page.layout.length !== ids.length || page.layout.some(l => !ids.includes(l.i))) {
+    ctx.addIssue({ code: "custom", message: "Each widget must have exactly one unique grid position" });
+  }
+});
+export type WorkspacePage = z.infer<typeof pageSchema>;
+export const workspaceSchema = z.object({
+  version: z.literal(1),
+  theme: z.enum(["dark", "light"]),
+  dataMode: z.enum(["auto", "demo"]),
+  pages: z.array(pageSchema).min(1).max(20),
+  stockTemplate: pageSchema,
+  stockOverrides: z.record(symbolSchema, pageSchema),
+  watchlists: z.array(z.object({ id: idSchema, name: z.string().trim().min(1).max(40), symbols: z.array(symbolSchema).max(30) })).min(1).max(20),
+  notes: z.record(z.string().max(120), z.string().max(20000)),
+}).superRefine((state, ctx) => {
+  if (!state.pages.some(p => p.id === "home") || new Set(state.pages.map(p => p.id)).size !== state.pages.length || new Set(state.watchlists.map(w => w.id)).size !== state.watchlists.length) {
+    ctx.addIssue({ code: "custom", message: "Workspace must have a home page and unique page/watchlist IDs" });
+  }
+  for (const page of [...state.pages, state.stockTemplate, ...Object.values(state.stockOverrides)]) {
+    if (page.widgets.some(w => !state.watchlists.some(list => list.id === w.watchlistId))) ctx.addIssue({ code: "custom", message: "Widget refers to a missing watchlist" });
+  }
+});
+export type Workspace = z.infer<typeof workspaceSchema>;
+export function makeWidget(type: WidgetType, id = crypto.randomUUID()): Widget {
+  return widgetSchema.parse({ id, type, title: widgetCatalog[type].name });
+}
+export function homePage(): WorkspacePage {
+  return { id: "home", name: "Overview", widgets: [
+    makeWidget("market", "market"), makeWidget("watchlist", "watchlist"), makeWidget("movers", "movers"), makeWidget("news", "news"), makeWidget("earnings", "earnings"),
+  ], layout: [
+    { i: "market", x: 0, y: 0, w: 3, h: 7 },
+    { i: "watchlist", x: 3, y: 0, w: 6, h: 14 },
+    { i: "movers", x: 9, y: 0, w: 3, h: 7 },
+    { i: "news", x: 0, y: 7, w: 3, h: 7 },
+    { i: "earnings", x: 9, y: 7, w: 3, h: 7 },
+  ] };
+}
+export function stockPage(): WorkspacePage {
+  return { id: "stock-template", name: "Stock template", widgets: [
+    makeWidget("chart", "stock-chart"), makeWidget("quote", "stock-quote"), makeWidget("news", "stock-news"), makeWidget("notes", "stock-notes"),
+  ], layout: [
+    { i: "stock-chart", x: 0, y: 0, w: 8, h: 9 },
+    { i: "stock-quote", x: 8, y: 0, w: 4, h: 9 },
+    { i: "stock-news", x: 0, y: 9, w: 7, h: 8 },
+    { i: "stock-notes", x: 7, y: 9, w: 5, h: 8 },
+  ] };
+}
+export function initialWorkspace(): Workspace {
+  return { version: 1, theme: "dark", dataMode: "auto", pages: [homePage()], stockTemplate: stockPage(), stockOverrides: {}, watchlists: [
+    { id: "core", name: "Core watchlist", symbols: ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AMD"] },
+    { id: "benchmarks", name: "Benchmarks", symbols: ["SPY", "QQQ", "DIA", "IWM"] },
+  ], notes: {} };
+}
+export function parseWorkspace(raw: string): Workspace {
+  if (raw.length > 2_000_000) throw new Error("Workspace file is too large (maximum 2 MB)");
+  const result = workspaceSchema.safeParse(JSON.parse(raw));
+  if (!result.success) throw new Error("Invalid workspace file. Please import a Folio version 1 export.");
+  return result.data;
+}
+export function addWidget(page: WorkspacePage, type: WidgetType, watchlistId = "core"): WorkspacePage {
+  if (page.widgets.length >= 30) return page;
+  const widget = { ...makeWidget(type), watchlistId };
+  const y = Math.max(0, ...page.layout.map(item => item.y + item.h));
+  return { ...page, widgets: [...page.widgets, widget], layout: [...page.layout, { i: widget.id, x: 0, y, w: type === "chart" || type === "watchlist" ? 6 : 4, h: 8 }] };
+}
+export function removeWidget(page: WorkspacePage, id: string): WorkspacePage {
+  return { ...page, widgets: page.widgets.filter(w => w.id !== id), layout: page.layout.filter(l => l.i !== id) };
+}
+export function resolvePage(state: Workspace, pageId: string, symbol?: string): WorkspacePage | undefined {
+  return symbol ? state.stockOverrides[symbol] ?? state.stockTemplate : state.pages.find(p => p.id === pageId);
+}
