@@ -11,13 +11,13 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     ...devices["Desktop Chrome"],
-    channel: process.env.PLAYWRIGHT_CHANNEL || undefined
+    channel: process.env.PLAYWRIGHT_CHANNEL || undefined,
   },
   webServer: {
     command: "npm run start -- --port 3100",
     url: "http://127.0.0.1:3100",
     reuseExistingServer: false,
     env: { MARKET_DATA_MODE: "demo" },
-    timeout: 60000
-  }
+    timeout: 60000,
+  },
 });
