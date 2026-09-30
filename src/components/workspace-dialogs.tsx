@@ -11,6 +11,14 @@ import {
 import { Modal } from "./modal";
 import { companies } from "@/lib/market/demo";
 import {
+  metrics,
+  metricIds,
+  defaultMetrics,
+  sectorIds,
+  sectorLabels,
+  type Sector,
+} from "@/lib/market/research";
+import {
   parseWorkspace,
   ranges,
   symbolSchema,
@@ -160,7 +168,9 @@ export function WidgetSettings({
   const [draft, setDraft] = useState(widget);
   const [layout, setLayout] = useState(position);
   const [error, setError] = useState("");
-  const hasSymbol = ["chart", "quote", "news"].includes(widget.type);
+  const hasSymbol =
+    ["chart", "quote", "metrics"].includes(widget.type) ||
+    (widget.type === "news" && draft.newsScope === "company");
   return (
     <Modal
       title="Widget settings"
@@ -213,6 +223,116 @@ export function WidgetSettings({
               />
               Follow the page ticker on stock pages
             </label>
+          </>
+        )}
+        {widget.type === "metrics" && (
+          <fieldset className="metric-picker">
+            <legend>Visible metrics</legend>
+            <div className="metric-actions">
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setDraft({ ...draft, metrics: [...metricIds] })}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setDraft({ ...draft, metrics: [] })}
+              >
+                Clear all
+              </button>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() =>
+                  setDraft({ ...draft, metrics: [...defaultMetrics] })
+                }
+              >
+                Defaults
+              </button>
+            </div>
+            <div className="metric-checkboxes">
+              {metricIds.map((id) => (
+                <label
+                  key={id}
+                  className="checkbox-label"
+                  title={metrics[id].description}
+                >
+                  <input
+                    type="checkbox"
+                    checked={draft.metrics.includes(id)}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        metrics: e.target.checked
+                          ? [...draft.metrics, id]
+                          : draft.metrics.filter((metric) => metric !== id),
+                      })
+                    }
+                  />
+                  {metrics[id].label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
+        {widget.type === "news" && (
+          <>
+            <label>
+              News coverage
+              <select
+                aria-label="News coverage"
+                value={draft.newsScope}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    newsScope: e.target.value as Widget["newsScope"],
+                  })
+                }
+              >
+                <option value="company">This company</option>
+                <option value="market">Whole market / sector</option>
+              </select>
+            </label>
+            {draft.newsScope === "market" && (
+              <>
+                <label>
+                  Sector
+                  <select
+                    aria-label="News sector"
+                    value={draft.sector}
+                    onChange={(e) =>
+                      setDraft({ ...draft, sector: e.target.value as Sector })
+                    }
+                  >
+                    {sectorIds.map((sector) => (
+                      <option key={sector} value={sector}>
+                        {sectorLabels[sector]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Article view
+                  <select
+                    aria-label="Article view"
+                    value={draft.newsView}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        newsView: e.target.value as Widget["newsView"],
+                      })
+                    }
+                  >
+                    <option value="cards">Cards</option>
+                    <option value="list">Headlines</option>
+                    <option value="sectors">Grouped by sector</option>
+                  </select>
+                </label>
+              </>
+            )}
           </>
         )}
         {widget.type === "chart" && (
@@ -290,7 +410,9 @@ export function WidgetSettings({
             <input
               type="number"
               min={1}
-              max={20}
+              max={
+                draft.type === "news" && draft.newsScope === "market" ? 120 : 20
+              }
               value={draft.limit}
               onChange={(e) =>
                 setDraft({ ...draft, limit: Number(e.target.value) })
@@ -460,6 +582,12 @@ export function WorkspaceSettings({
         watchlists,
         pages: state.pages.map(repair),
         stockTemplate: repair(state.stockTemplate),
+        newsPages: Object.fromEntries(
+          Object.entries(state.newsPages).map(([sector, page]) => [
+            sector,
+            repair(page),
+          ]),
+        ),
         stockOverrides: Object.fromEntries(
           Object.entries(state.stockOverrides).map(([symbol, page]) => [
             symbol,

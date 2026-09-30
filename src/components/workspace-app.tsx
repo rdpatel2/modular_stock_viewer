@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import GridLayout, { type Layout } from "react-grid-layout/legacy";
+import GridLayout from "react-grid-layout/legacy";
 import { useContainerWidth } from "react-grid-layout";
 import {
   ArrowLeft,
@@ -36,14 +36,17 @@ import {
   homePage,
   removeWidget,
   resolvePage,
-  settleLayout,
+  newsPage,
   stockPage,
   symbolSchema,
   type Widget,
   type WidgetType,
   type Workspace,
   type WorkspacePage,
+  type LayoutItem,
 } from "@/lib/workspace";
+import { reconcileLayout, resolveLayoutMove } from "@/lib/layout";
+import { sectorIds, sectorLabels } from "@/lib/market/research";
 import { companies } from "@/lib/market/demo";
 import { WidgetContent } from "./widgets";
 import {
@@ -87,12 +90,18 @@ function WorkspaceShell({
   const symbolResult =
     parts[0] === "stock" ? symbolSchema.safeParse(parts[1] ?? "") : null;
   const symbol = symbolResult?.success ? symbolResult.data : undefined;
+  const newsSector =
+    parts[0] === "news" && parts.length <= 2
+      ? sectorIds.find((id) => id === (parts[1] ?? "all"))
+      : undefined;
   const pageId =
     parts.length === 0
       ? "home"
-      : parts[0] === "dashboard" && parts.length === 2
-        ? parts[1]
-        : "missing";
+      : newsSector
+        ? `news-${newsSector}`
+        : parts[0] === "dashboard" && parts.length === 2
+          ? parts[1]
+          : "missing";
   const page =
     parts.length <= 2 ? resolvePage(workspace, pageId, symbol) : undefined;
   const [editing, setEditing] = useState(false);
@@ -145,7 +154,15 @@ function WorkspaceShell({
       const current = resolvePage(state, pageId, symbol);
       if (!current) return state;
       const changed = change(current);
-      const next = { ...changed, layout: settleLayout(changed.layout) };
+      const next = {
+        ...changed,
+        layout: reconcileLayout(current.layout, changed.layout),
+      };
+      if (newsSector)
+        return {
+          ...state,
+          newsPages: { ...state.newsPages, [newsSector]: next },
+        };
       if (symbol)
         return state.stockOverrides[symbol]
           ? {
@@ -191,11 +208,13 @@ function WorkspaceShell({
     )
       return;
     changePage((current) => {
-      const next = symbol
-        ? stockPage()
-        : pageId === "home"
-          ? homePage()
-          : { ...current, widgets: [], layout: [] };
+      const next = newsSector
+        ? newsPage(newsSector, workspace.watchlists[0].id)
+        : symbol
+          ? stockPage()
+          : pageId === "home"
+            ? homePage()
+            : { ...current, widgets: [], layout: [] };
       return {
         ...next,
         id: current.id,
@@ -261,6 +280,13 @@ function WorkspaceShell({
           </button>
         </div>
         <nav aria-label="Dashboards">
+          <button
+            className={`nav-item ${newsSector ? "selected" : ""}`}
+            onClick={() => navigate("/news")}
+          >
+            <FileText size={17} />
+            <span>Market news</span>
+          </button>
           {workspace.pages.map((p) => (
             <button
               key={p.id}
@@ -432,9 +458,11 @@ function WorkspaceShell({
                     </span>
                   </div>
                   <p>
-                    {symbol
-                      ? "The details that matter. A research space that works your way."
-                      : "A clear view of your markets. A space to make your own."}
+                    {newsSector
+                      ? "Market-wide headlines, organized by the sectors you follow. Each sector has its own customizable view."
+                      : symbol
+                        ? "The details that matter. A research space that works your way."
+                        : "A clear view of your markets. A space to make your own."}
                   </p>
                 </div>
                 <div className="page-actions">
@@ -459,6 +487,22 @@ function WorkspaceShell({
                   </button>
                 </div>
               </div>
+              {newsSector && (
+                <nav className="sector-tabs" aria-label="News sectors">
+                  {sectorIds.map((sector) => (
+                    <button
+                      key={sector}
+                      aria-pressed={newsSector === sector}
+                      className={newsSector === sector ? "active" : ""}
+                      onClick={() =>
+                        navigate(sector === "all" ? "/news" : `/news/${sector}`)
+                      }
+                    >
+                      {sectorLabels[sector]}
+                    </button>
+                  ))}
+                </nav>
+              )}
               <div className="workspace-meta">
                 <div>
                   <span className="status-dot" />
@@ -532,8 +576,8 @@ function WorkspaceShell({
                 <div className="editing-bar">
                   <span>
                     <Grip size={16} />
-                    Drag headers to move · Pull a corner to resize · Settings
-                    include keyboard-friendly positioning
+                    Drag to swap or snap nearby · Pull a corner to resize ·
+                    Settings include keyboard-friendly positioning
                   </span>
                   <div>
                     <button
@@ -547,7 +591,7 @@ function WorkspaceShell({
                       <RotateCcw size={13} />
                       Reset
                     </button>
-                    {pageId !== "home" && !symbol && (
+                    {pageId !== "home" && !symbol && !newsSector && (
                       <button
                         className="text-button danger"
                         onClick={() => {
@@ -754,12 +798,23 @@ function DashboardGrid({
         return position;
       })
     : page.layout.map((l) => ({ ...l, minW: 2, minH: 3, maxH: 30 }));
-  const saveLayout = (next: Layout) => {
-    if (!mobile)
+  const beforeInteraction = useRef<LayoutItem[] | null>(null);
+  const rememberLayout = () => {
+    beforeInteraction.current = page.layout.map((item) => ({ ...item }));
+  };
+  const saveItem = (item: LayoutItem, kind: "move" | "resize") => {
+    if (!mobile) {
+      const previous = beforeInteraction.current ?? page.layout;
       changePage((p) => ({
         ...p,
-        layout: next.map(({ i, x, y, w, h }) => ({ i, x, y, w, h })),
+        layout: resolveLayoutMove(
+          previous,
+          { i: item.i, x: item.x, y: item.y, w: item.w, h: item.h },
+          kind,
+        ),
       }));
+    }
+    beforeInteraction.current = null;
   };
   return (
     <div
@@ -776,12 +831,19 @@ function DashboardGrid({
           containerPadding={[0, 0]}
           layout={layout}
           compactType={null}
+          allowOverlap
           isDraggable={editing && !mobile}
           isResizable={editing && !mobile}
           draggableHandle=".widget-drag-handle"
           draggableCancel="button,input,select,textarea"
-          onDragStop={saveLayout}
-          onResizeStop={saveLayout}
+          onDragStart={rememberLayout}
+          onResizeStart={rememberLayout}
+          onDragStop={(_layout, _oldItem, item) => {
+            if (item) saveItem(item, "move");
+          }}
+          onResizeStop={(_layout, _oldItem, item) => {
+            if (item) saveItem(item, "resize");
+          }}
         >
           {page.widgets.map((widget) => (
             <section

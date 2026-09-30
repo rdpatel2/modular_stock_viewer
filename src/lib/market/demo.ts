@@ -1,5 +1,45 @@
 import type { EarningsItem, NewsItem, Quote } from "./types";
 import type { Range } from "@/lib/workspace";
+import { metricIds, type Fundamentals } from "./research";
+
+export function demoFundamentals(symbol: string): Fundamentals {
+  if (!companies[symbol])
+    throw new Error("No demo fundamentals for this symbol");
+  const values = Object.fromEntries(
+    metricIds.map((id) => [id, null]),
+  ) as Fundamentals["values"];
+  // Illustrative company figures only; ETF fundamentals remain unavailable.
+  if (!["SPY", "QQQ", "DIA", "IWM"].includes(symbol))
+    Object.assign(values, {
+      trailingEps: 6.08,
+      forwardEps: 7.14,
+      trailingPE: companies[symbol][1] / 6.08,
+      forwardPE: companies[symbol][1] / 7.14,
+      pegRatio: 2.1,
+      priceToBook: 12.4,
+      priceToSales: 8.7,
+      marketCap: 3.2e12,
+      enterpriseValue: 3.25e12,
+      enterpriseToEbitda: 24.2,
+      dividendYield: 0.0044,
+      beta: 1.18,
+      profitMargins: 0.243,
+      operatingMargins: 0.312,
+      returnOnEquity: 0.38,
+      revenueGrowth: 0.061,
+      earningsGrowth: 0.093,
+      totalRevenue: 3.91e11,
+      freeCashflow: 8.2e10,
+      debtToEquity: 1.42,
+    });
+  return {
+    symbol,
+    currency: "USD",
+    financialCurrency: "USD",
+    values,
+    asOf: DEMO_AS_OF,
+  };
+}
 export const companies: Record<string, [string, number, number]> = {
   AAPL: ["Apple Inc.", 227.52, 1.24],
   MSFT: ["Microsoft Corporation", 428.76, 0.83],

@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { ranges, symbolSchema } from "@/lib/workspace";
-import { getEarnings, getNews, getQuote } from "@/lib/market/service";
+import {
+  getEarnings,
+  getNews,
+  getQuote,
+  getFundamentals,
+  getMarketNews,
+} from "@/lib/market/service";
 
 const querySchema = z.object({
-  kind: z.enum(["quote", "news", "earnings"]).default("quote"),
+  kind: z
+    .enum(["quote", "news", "earnings", "fundamentals", "market-news"])
+    .default("quote"),
   symbol: symbolSchema.default("AAPL"),
   range: z.enum(ranges).default("1d"),
   mode: z.enum(["auto", "demo"]).default("auto"),
@@ -29,14 +37,18 @@ export async function GET(request: NextRequest) {
   const { kind, symbol, range, mode, date } = parsed.data;
   try {
     const result =
-      kind === "news"
-        ? await getNews(symbol, mode)
-        : kind === "earnings"
-          ? await getEarnings(
-              date ?? new Date().toISOString().slice(0, 10),
-              mode,
-            )
-          : await getQuote(symbol, range, mode);
+      kind === "fundamentals"
+        ? await getFundamentals(symbol, mode)
+        : kind === "market-news"
+          ? await getMarketNews(mode)
+          : kind === "news"
+            ? await getNews(symbol, mode)
+            : kind === "earnings"
+              ? await getEarnings(
+                  date ?? new Date().toISOString().slice(0, 10),
+                  mode,
+                )
+              : await getQuote(symbol, range, mode);
     return NextResponse.json(result, {
       headers: { "Cache-Control": "private, max-age=60" },
     });

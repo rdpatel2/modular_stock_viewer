@@ -1,4 +1,13 @@
-import { demoEarnings, demoNews, demoQuote, DEMO_AS_OF } from "./demo";
+import {
+  demoEarnings,
+  demoNews,
+  demoQuote,
+  demoFundamentals,
+  DEMO_AS_OF,
+} from "./demo";
+import { yahooFundamentals } from "./fundamentals";
+import { marketNews, demoMarketNews, type MarketNews } from "./market-news";
+import type { Fundamentals } from "./research";
 import { nasdaqEarnings, yahooNews, yahooProvider } from "./providers";
 import type { DataEnvelope, EarningsItem, NewsItem, Quote } from "./types";
 import type { Range } from "@/lib/workspace";
@@ -67,6 +76,27 @@ export function getQuote(
     yahooProvider.id,
     () => yahooProvider.quote(symbol, range),
     () => demoQuote(symbol, range),
+  );
+}
+export function getFundamentals(
+  symbol: string,
+  mode: string,
+): Promise<DataEnvelope<Fundamentals>> {
+  return withFallback(
+    `fundamentals:${symbol}`,
+    mode,
+    "Yahoo Finance fundamentals",
+    () => yahooFundamentals(symbol),
+    () => demoFundamentals(symbol),
+  );
+}
+export function getMarketNews(mode: string): Promise<DataEnvelope<MarketNews>> {
+  return withFallback(
+    "market-news",
+    mode,
+    "Yahoo Finance / CNBC RSS",
+    marketNews,
+    demoMarketNews,
   );
 }
 export function getNews(

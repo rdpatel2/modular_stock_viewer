@@ -7,6 +7,7 @@ import "@fontsource/manrope/700.css";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import "./globals.css";
+import "./research.css";
 export const metadata: Metadata = {
   title: "Folio — Your market, your workspace",
   description:

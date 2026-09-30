@@ -1,4 +1,12 @@
 import { z } from "zod";
+import {
+  defaultMetrics,
+  metricIds,
+  sectorIds,
+  sectorLabels,
+  type Sector,
+} from "./market/research";
+export { settleLayout } from "./layout";
 
 export const STORAGE_KEY = "folio.workspace.v1";
 export const symbolSchema = z
@@ -13,6 +21,7 @@ export const widgetTypes = [
   "watchlist",
   "chart",
   "quote",
+  "metrics",
   "movers",
   "market",
   "news",
@@ -40,6 +49,12 @@ export const widgetCatalog: Record<
     name: "Key statistics",
     description: "A focused view of price, volume, and trading ranges.",
     category: "Markets",
+  },
+  metrics: {
+    name: "Advanced metrics",
+    description:
+      "EPS, valuation multiples, margins, and growth. Show only the metrics you need.",
+    category: "Research",
   },
   movers: {
     name: "Daily movers",
@@ -84,6 +99,13 @@ export const widgetSchema = z.object({
   direction: z.enum(["gainers", "losers"]).default("gainers"),
   showVolume: z.boolean().default(true),
   showChart: z.boolean().default(true),
+  metrics: z
+    .array(z.enum(metricIds))
+    .max(metricIds.length)
+    .default(defaultMetrics),
+  newsScope: z.enum(["company", "market"]).default("company"),
+  sector: z.enum(sectorIds).default("all"),
+  newsView: z.enum(["cards", "list", "sectors"]).default("cards"),
   earningsDate: z
     .string()
     .refine(
@@ -94,7 +116,7 @@ export const widgetSchema = z.object({
           new Date(s).toISOString().slice(0, 10) === s),
     )
     .default(""),
-  limit: z.number().int().min(1).max(20).default(8),
+  limit: z.number().int().min(1).max(120).default(8),
 });
 export type Widget = z.infer<typeof widgetSchema>;
 export const layoutItemSchema = z
@@ -137,6 +159,8 @@ export const workspaceSchema = z
     pages: z.array(pageSchema).min(1).max(20),
     stockTemplate: pageSchema,
     stockOverrides: z.record(symbolSchema, pageSchema),
+    newsPages: z.partialRecord(z.enum(sectorIds), pageSchema).default({}),
+    researchVersion: z.literal(1).optional(),
     watchlists: z
       .array(
         z.object({
@@ -166,6 +190,7 @@ export const workspaceSchema = z
       ...state.pages,
       state.stockTemplate,
       ...Object.values(state.stockOverrides),
+      ...Object.values(state.newsPages),
     ]) {
       if (
         page.widgets.some(
@@ -216,12 +241,14 @@ export function stockPage(): WorkspacePage {
       makeWidget("quote", "stock-quote"),
       makeWidget("news", "stock-news"),
       makeWidget("notes", "stock-notes"),
+      makeWidget("metrics", "stock-metrics"),
     ],
     layout: [
       { i: "stock-chart", x: 0, y: 0, w: 8, h: 9 },
       { i: "stock-quote", x: 8, y: 0, w: 4, h: 9 },
       { i: "stock-news", x: 0, y: 9, w: 7, h: 8 },
       { i: "stock-notes", x: 7, y: 9, w: 5, h: 8 },
+      { i: "stock-metrics", x: 0, y: 17, w: 12, h: 7 },
     ],
   };
 }
@@ -233,6 +260,8 @@ export function initialWorkspace(): Workspace {
     pages: [homePage()],
     stockTemplate: stockPage(),
     stockOverrides: {},
+    newsPages: {},
+    researchVersion: 1,
     watchlists: [
       {
         id: "core",
@@ -265,7 +294,46 @@ export function parseWorkspace(raw: string): Workspace {
     throw new Error(
       "Invalid workspace file. Please import a Folio version 1 export.",
     );
-  return result.data;
+  return upgradeResearchWorkspace(result.data);
+}
+export function newsPage(
+  sector: Sector = "all",
+  watchlistId = "core",
+): WorkspacePage {
+  return {
+    id: `news-${sector}`,
+    name: sector === "all" ? "Market news" : `${sectorLabels[sector]} news`,
+    widgets: [
+      {
+        ...makeWidget("news", "market-news"),
+        title: "Market headlines",
+        newsScope: "market",
+        followSymbol: false,
+        sector,
+        limit: 20,
+        watchlistId,
+      },
+    ],
+    layout: [{ i: "market-news", x: 0, y: 0, w: 12, h: 16 }],
+  };
+}
+function upgradeResearchWorkspace(state: Workspace): Workspace {
+  if (state.researchVersion) return state;
+  const upgrade = (page: WorkspacePage) =>
+    page.widgets.some((w) => w.type === "metrics") || page.widgets.length >= 30
+      ? page
+      : addWidget(page, "metrics", state.watchlists[0].id);
+  return {
+    ...state,
+    researchVersion: 1,
+    stockTemplate: upgrade(state.stockTemplate),
+    stockOverrides: Object.fromEntries(
+      Object.entries(state.stockOverrides).map(([symbol, page]) => [
+        symbol,
+        upgrade(page),
+      ]),
+    ),
+  };
 }
 export function addWidget(
   page: WorkspacePage,
@@ -297,30 +365,18 @@ export function removeWidget(page: WorkspacePage, id: string): WorkspacePage {
     layout: page.layout.filter((l) => l.i !== id),
   };
 }
-export function settleLayout(layout: LayoutItem[]): LayoutItem[] {
-  const placed: LayoutItem[] = [];
-  for (const original of layout) {
-    const item = { ...original };
-    let collision: LayoutItem | undefined;
-    while (
-      (collision = placed.find(
-        (other) =>
-          item.x < other.x + other.w &&
-          item.x + item.w > other.x &&
-          item.y < other.y + other.h &&
-          item.y + item.h > other.y,
-      ))
-    )
-      item.y = collision.y + collision.h;
-    placed.push(item);
-  }
-  return placed;
-}
 export function resolvePage(
   state: Workspace,
   pageId: string,
   symbol?: string,
 ): WorkspacePage | undefined {
+  if (!symbol && pageId.startsWith("news-")) {
+    const sector = sectorIds.find((id) => pageId === `news-${id}`);
+    if (sector)
+      return (
+        state.newsPages[sector] ?? newsPage(sector, state.watchlists[0].id)
+      );
+  }
   return symbol
     ? (state.stockOverrides[symbol] ?? state.stockTemplate)
     : state.pages.find((p) => p.id === pageId);

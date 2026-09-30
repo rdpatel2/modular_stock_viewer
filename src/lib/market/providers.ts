@@ -115,6 +115,13 @@ export async function yahooNews(symbol: string): Promise<NewsItem[]> {
     `https://finance.yahoo.com/rss/headline?s=${encodeURIComponent(symbol)}`,
   );
   const xml = await response.text();
+  return parseNewsFeed(xml, "Yahoo Finance RSS");
+}
+export function parseNewsFeed(
+  xml: string,
+  publisher: string,
+  limit = 20,
+): NewsItem[] {
   if (xml.length > 1_000_000 || /<!DOCTYPE|<!ENTITY/i.test(xml))
     throw new Error("Invalid news feed");
   // DTD/entity declarations are rejected above; decode only standard XML entities.
@@ -122,7 +129,7 @@ export async function yahooNews(symbol: string): Promise<NewsItem[]> {
   const raw: unknown = parsed?.rss?.channel?.item;
   if (!raw) throw new Error("News unavailable");
   const items = Array.isArray(raw) ? raw : [raw];
-  return items.slice(0, 20).flatMap((item: unknown) => {
+  return items.slice(0, limit).flatMap((item: unknown) => {
     const result = z
       .object({ title: z.string(), link: z.string(), pubDate: z.string() })
       .safeParse(item);
@@ -134,7 +141,7 @@ export async function yahooNews(symbol: string): Promise<NewsItem[]> {
           {
             title: result.data.title,
             url,
-            publisher: "Yahoo Finance RSS",
+            publisher,
             publishedAt: date.toISOString(),
           },
         ]

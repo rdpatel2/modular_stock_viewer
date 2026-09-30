@@ -11,6 +11,14 @@ import {
 } from "lucide-react";
 import type { Widget, Workspace } from "@/lib/workspace";
 import { ranges, symbolSchema } from "@/lib/workspace";
+import {
+  metrics,
+  sectorLabels,
+  sectorIds,
+  type Fundamentals,
+  type MetricId,
+} from "@/lib/market/research";
+import type { MarketNews, MarketArticle } from "@/lib/market/market-news";
 import type {
   DataEnvelope,
   EarningsItem,
@@ -250,8 +258,14 @@ export function WidgetContent(props: Props) {
       return <ChartWidget {...props} />;
     case "quote":
       return <QuoteWidget {...props} />;
+    case "metrics":
+      return <MetricsWidget {...props} />;
     case "news":
-      return <NewsWidget {...props} />;
+      return props.widget.newsScope === "market" ? (
+        <MarketNewsWidget {...props} />
+      ) : (
+        <NewsWidget {...props} />
+      );
     case "earnings":
       return <EarningsWidget {...props} />;
     case "notes":
@@ -262,6 +276,246 @@ const activeSymbol = (props: Props) =>
   props.symbol && props.widget.followSymbol
     ? props.symbol
     : props.widget.symbol;
+function metricValue(id: MetricId, value: number | null, data: Fundamentals) {
+  if (value === null) return "—";
+  const currency = ["totalRevenue", "freeCashflow"].includes(id)
+    ? data.financialCurrency
+    : data.currency;
+  switch (metrics[id].format) {
+    case "money":
+      return money(value, currency);
+    case "percent":
+      return `${(value * 100).toFixed(2)}%`;
+    case "multiple":
+      return `${value.toFixed(2)}×`;
+    case "compact":
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency,
+        notation: "compact",
+        maximumFractionDigits: 2,
+      }).format(value);
+    default:
+      return value.toFixed(2);
+  }
+}
+function MetricsWidget(props: Props) {
+  const symbol = activeSymbol(props);
+  const { data, error, mutate } = useMarket<Fundamentals>(
+    "fundamentals",
+    props.workspace.dataMode,
+    symbol,
+  );
+  return (
+    <>
+      <div className="widget-toolbar">
+        <span className="eyebrow">{symbol} · Fundamentals</span>
+        <button
+          className="text-button"
+          onClick={() => props.configure(props.widget)}
+        >
+          Choose metrics
+        </button>
+        <SourceBadge source={data?.source} />
+      </div>
+      {!props.widget.metrics.length ? (
+        <div className="empty-inline">
+          No metrics selected. Choose metrics to build your view.
+        </div>
+      ) : !data ? (
+        <DataState error={error} retry={() => mutate()} />
+      ) : (
+        <>
+          <dl className="metrics-grid">
+            {props.widget.metrics.map((id) => (
+              <div
+                key={id}
+                data-metric={id}
+                title={`${metrics[id].description}${data.data.values[id] === null ? " Not provided or not meaningful for this security." : ""}`}
+              >
+                <dt>{metrics[id].label}</dt>
+                <dd>{metricValue(id, data.data.values[id], data.data)}</dd>
+              </div>
+            ))}
+          </dl>
+          <div className="widget-footnote">
+            {data.source.demo
+              ? "Illustrative fundamentals"
+              : "Yahoo Finance fundamentals"}{" "}
+            · Retrieved {new Date(data.data.asOf).toLocaleString()}
+            <br />
+            TTM = trailing twelve months · Forward values are estimates · — =
+            unavailable / not meaningful
+            {data.data.currency !== data.data.financialCurrency && (
+              <>
+                <br />
+                Trading currency: {data.data.currency} · Financial reporting:{" "}
+                {data.data.financialCurrency}
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+function MarketNewsWidget(props: Props) {
+  const { data, error, mutate } = useMarket<MarketNews>(
+    "market-news",
+    props.workspace.dataMode,
+  );
+  const [query, setQuery] = useState("");
+  const { widget } = props;
+  const articles =
+    data?.data.articles.filter(
+      (article) =>
+        (widget.sector === "all" || article.sectors.includes(widget.sector)) &&
+        `${article.title} ${article.publisher}`
+          .toLowerCase()
+          .includes(query.toLowerCase()),
+    ) ?? [];
+  const visible = articles.slice(0, widget.limit);
+  function articleCard(article: MarketArticle) {
+    return (
+      <a
+        className="market-article"
+        key={article.url}
+        href={article.url}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <div className="article-meta">
+          <span>{article.publisher}</span>
+          <time dateTime={article.publishedAt}>
+            {new Date(article.publishedAt).toLocaleString("en-US", {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </time>
+        </div>
+        <h3>
+          {article.title}
+          <External size={14} />
+        </h3>
+        <div className="article-sectors">
+          {article.sectors.map((sector) => (
+            <span key={sector}>{sectorLabels[sector]}</span>
+          ))}
+        </div>
+      </a>
+    );
+  }
+  return (
+    <div className="market-news-content">
+      <div className="news-controls">
+        <input
+          aria-label="Search market headlines"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search headlines or publishers…"
+        />
+        <div className="segmented" aria-label="News display">
+          {(["cards", "list", "sectors"] as const).map((view) => (
+            <button
+              key={view}
+              aria-pressed={widget.newsView === view}
+              className={widget.newsView === view ? "active" : ""}
+              onClick={() => props.patchWidget({ ...widget, newsView: view })}
+            >
+              {view === "cards"
+                ? "Cards"
+                : view === "list"
+                  ? "Headlines"
+                  : "By sector"}
+            </button>
+          ))}
+        </div>
+        <SourceBadge source={data?.source} />
+      </div>
+      <p className="news-coverage-note">
+        {sectorLabels[widget.sector]} · Sector labels are inferred from
+        headlines; articles may cover multiple sectors.
+      </p>
+      {!data ? (
+        <DataState error={error} retry={() => mutate()} />
+      ) : (
+        <>
+          {data.data.unavailableFeeds.length > 0 && (
+            <div className="warning-banner" role="status">
+              Some feeds are unavailable:{" "}
+              {data.data.unavailableFeeds.join(", ")}. Showing available
+              coverage.
+            </div>
+          )}
+          {data.source.demo && (
+            <div className="news-demo-note">
+              Sample headlines, not current news. Links open the publisher’s
+              news page.
+            </div>
+          )}
+          {widget.newsView === "sectors" ? (
+            <div className="news-sector-groups">
+              {sectorIds
+                .filter(
+                  (sector) =>
+                    sector !== "all" &&
+                    (widget.sector === "all" || widget.sector === sector),
+                )
+                .map((sector) => {
+                  const group = visible.filter(
+                    (article) =>
+                      sector !== "all" && article.sectors.includes(sector),
+                  );
+                  return group.length ? (
+                    <section className="news-sector-group" key={sector}>
+                      <h3>
+                        {sectorLabels[sector]} <span>{group.length}</span>
+                      </h3>
+                      <div className="market-articles cards">
+                        {group.map(articleCard)}
+                      </div>
+                    </section>
+                  ) : null;
+                })}
+            </div>
+          ) : (
+            <div className={`market-articles ${widget.newsView}`}>
+              {visible.map(articleCard)}
+            </div>
+          )}
+          {!articles.length && (
+            <div className="empty-inline">
+              No matching headlines in the available feeds. Try another sector
+              or search.
+            </div>
+          )}
+          {articles.length > widget.limit && (
+            <button
+              className="button news-more"
+              onClick={() =>
+                props.patchWidget({
+                  ...widget,
+                  limit: Math.min(120, widget.limit + 20),
+                })
+              }
+            >
+              Show more headlines ({articles.length - widget.limit} remaining)
+            </button>
+          )}
+          <div className="widget-footnote">
+            {visible.length} of {articles.length} matching articles ·{" "}
+            {data.source.demo
+              ? "Demo collection"
+              : "Free public RSS feeds; coverage is not exhaustive"}{" "}
+            · Refreshed {new Date(data.source.asOf).toLocaleString()}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 function WatchlistWidget(props: Props) {
   const { widget, workspace, update } = props;
   const [draft, setDraft] = useState("");
