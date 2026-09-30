@@ -70,18 +70,27 @@ test("dragging and resizing saves grid geometry across reloads", async ({
   const widget = page.getByTestId("widget-market");
   const handle = await widget.locator(".widget-drag-handle").boundingBox();
   if (!handle) throw new Error("Drag handle missing");
+  const destination = await page
+    .getByTestId("widget-movers")
+    .locator(".widget-drag-handle")
+    .boundingBox();
+  if (!destination) throw new Error("Destination missing");
   await page.mouse.move(handle.x + 45, handle.y + handle.height / 2);
   await page.mouse.down();
-  await page.mouse.move(handle.x + 45, handle.y + 160, { steps: 12 });
+  await page.mouse.move(
+    destination.x + 45,
+    destination.y + destination.height / 2,
+    { steps: 12 },
+  );
   await page.mouse.up();
   await expect
     .poll(
       async () =>
         (await readState(page))?.pages[0].layout.find(
           (l: { i: string }) => l.i === "market",
-        ).y,
+        ).x,
     )
-    .toBeGreaterThan(0);
+    .toBe(9);
   await widget.locator(".react-resizable-handle").scrollIntoViewIfNeeded();
   const resize = await widget.locator(".react-resizable-handle").boundingBox();
   if (!resize) throw new Error("Resize handle missing");
