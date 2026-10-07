@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { calculatePosition, tradeSchema } from "./portfolio";
+import { taxProfileSchema } from "./tax";
 import {
   defaultMetrics,
   metricIds,
@@ -19,9 +21,11 @@ export const symbolSchema = z
   );
 export const widgetTypes = [
   "watchlist",
+  "trades",
   "chart",
   "quote",
   "metrics",
+  "analyst",
   "movers",
   "market",
   "news",
@@ -40,6 +44,12 @@ export const widgetCatalog: Record<
     description: "Your symbols, prices, and daily performance in one place.",
     category: "Markets",
   },
+  trades: {
+    name: "My trades",
+    description:
+      "Your recorded purchases and sales, with shares, prices, fees, and totals.",
+    category: "Portfolio",
+  },
   chart: {
     name: "Price chart",
     description: "Explore price history from one day to five years.",
@@ -54,6 +64,12 @@ export const widgetCatalog: Record<
     name: "Advanced metrics",
     description:
       "EPS, valuation multiples, margins, and growth. Show only the metrics you need.",
+    category: "Research",
+  },
+  analyst: {
+    name: "Analyst trend",
+    description:
+      "Five-level analyst consensus for a stock or a watchlist market proxy.",
     category: "Research",
   },
   movers: {
@@ -99,6 +115,8 @@ export const widgetSchema = z.object({
   direction: z.enum(["gainers", "losers"]).default("gainers"),
   showVolume: z.boolean().default(true),
   showChart: z.boolean().default(true),
+  showPositions: z.boolean().default(false),
+  analystScope: z.enum(["stock", "watchlist"]).default("stock"),
   metrics: z
     .array(z.enum(metricIds))
     .max(metricIds.length)
@@ -161,6 +179,7 @@ export const workspaceSchema = z
     stockOverrides: z.record(symbolSchema, pageSchema),
     newsPages: z.partialRecord(z.enum(sectorIds), pageSchema).default({}),
     researchVersion: z.literal(1).optional(),
+    portfolioVersion: z.literal(1).optional(),
     watchlists: z
       .array(
         z.object({
@@ -172,8 +191,21 @@ export const workspaceSchema = z
       .min(1)
       .max(20),
     notes: z.record(z.string().max(120), z.string().max(20000)),
+    trades: z.record(symbolSchema, z.array(tradeSchema).max(5000)).default({}),
+    taxProfile: taxProfileSchema.nullable().default(null),
   })
   .superRefine((state, ctx) => {
+    for (const [symbol, trades] of Object.entries(state.trades)) {
+      try {
+        calculatePosition(trades);
+      } catch {
+        ctx.addIssue({
+          code: "custom",
+          message: `Invalid trade history for ${symbol}`,
+          path: ["trades", symbol],
+        });
+      }
+    }
     if (
       !state.pages.some((p) => p.id === "home") ||
       new Set(state.pages.map((p) => p.id)).size !== state.pages.length ||
@@ -242,6 +274,7 @@ export function stockPage(): WorkspacePage {
       makeWidget("news", "stock-news"),
       makeWidget("notes", "stock-notes"),
       makeWidget("metrics", "stock-metrics"),
+      makeWidget("analyst", "stock-analyst"),
     ],
     layout: [
       { i: "stock-chart", x: 0, y: 0, w: 8, h: 9 },
@@ -249,6 +282,7 @@ export function stockPage(): WorkspacePage {
       { i: "stock-news", x: 0, y: 9, w: 7, h: 8 },
       { i: "stock-notes", x: 7, y: 9, w: 5, h: 8 },
       { i: "stock-metrics", x: 0, y: 17, w: 12, h: 7 },
+      { i: "stock-analyst", x: 0, y: 24, w: 6, h: 10 },
     ],
   };
 }
@@ -262,6 +296,7 @@ export function initialWorkspace(): Workspace {
     stockOverrides: {},
     newsPages: {},
     researchVersion: 1,
+    portfolioVersion: 1,
     watchlists: [
       {
         id: "core",
@@ -284,6 +319,8 @@ export function initialWorkspace(): Workspace {
       },
     ],
     notes: {},
+    trades: {},
+    taxProfile: null,
   };
 }
 export function parseWorkspace(raw: string): Workspace {
@@ -294,7 +331,25 @@ export function parseWorkspace(raw: string): Workspace {
     throw new Error(
       "Invalid workspace file. Please import a Folio version 1 export.",
     );
-  return upgradeResearchWorkspace(result.data);
+  return upgradePortfolioWorkspace(upgradeResearchWorkspace(result.data));
+}
+function upgradePortfolioWorkspace(state: Workspace): Workspace {
+  if (state.portfolioVersion) return state;
+  const upgrade = (page: WorkspacePage) =>
+    page.widgets.some((w) => w.type === "analyst") || page.widgets.length >= 30
+      ? page
+      : addWidget(page, "analyst", state.watchlists[0].id);
+  return {
+    ...state,
+    portfolioVersion: 1,
+    stockTemplate: upgrade(state.stockTemplate),
+    stockOverrides: Object.fromEntries(
+      Object.entries(state.stockOverrides).map(([symbol, page]) => [
+        symbol,
+        upgrade(page),
+      ]),
+    ),
+  };
 }
 export function newsPage(
   sector: Sector = "all",
@@ -352,7 +407,7 @@ export function addWidget(
         i: widget.id,
         x: 0,
         y,
-        w: type === "chart" || type === "watchlist" ? 6 : 4,
+        w: ["chart", "watchlist", "trades"].includes(type) ? 6 : 4,
         h: 8,
       },
     ],

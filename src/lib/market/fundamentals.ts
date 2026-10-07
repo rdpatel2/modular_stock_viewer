@@ -119,9 +119,21 @@ export function parseFundamentals(raw: unknown, symbol: string): Fundamentals {
   };
 }
 export async function yahooFundamentals(symbol: string): Promise<Fundamentals> {
+  return parseFundamentals(
+    await yahooSummary(
+      symbol,
+      "price,summaryDetail,defaultKeyStatistics,financialData",
+    ),
+    symbol,
+  );
+}
+export async function yahooSummary(
+  symbol: string,
+  modules: string,
+): Promise<unknown> {
   const auth = await publicSession();
   const query = new URLSearchParams({
-    modules: "price,summaryDetail,defaultKeyStatistics,financialData",
+    modules,
     crumb: auth.crumb,
   });
   const response = await fetch(
@@ -137,5 +149,5 @@ export async function yahooFundamentals(symbol: string): Promise<Fundamentals> {
       clearFundamentalsSession();
     throw new Error("Fundamentals provider unavailable");
   }
-  return parseFundamentals(await response.json(), symbol);
+  return response.json();
 }

@@ -169,7 +169,7 @@ export function WidgetSettings({
   const [layout, setLayout] = useState(position);
   const [error, setError] = useState("");
   const hasSymbol =
-    ["chart", "quote", "metrics"].includes(widget.type) ||
+    ["chart", "quote", "metrics", "analyst"].includes(widget.type) ||
     (widget.type === "news" && draft.newsScope === "company");
   return (
     <Modal
@@ -350,7 +350,24 @@ export function WidgetSettings({
             </select>
           </label>
         )}
-        {["watchlist", "movers", "market"].includes(widget.type) && (
+        {widget.type === "analyst" && (
+          <label>
+            Analyst coverage
+            <select
+              value={draft.analystScope}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  analystScope: e.target.value as Widget["analystScope"],
+                })
+              }
+            >
+              <option value="stock">Stock consensus</option>
+              <option value="watchlist">Market proxy (watchlist)</option>
+            </select>
+          </label>
+        )}
+        {["watchlist", "movers", "market", "analyst"].includes(widget.type) && (
           <label>
             Watchlist
             <select
@@ -726,7 +743,8 @@ export function WorkspaceSettings({
           />
         </div>
         <p className="help-text">
-          Exports include layouts, watchlists, and private notes. Keep a backup
+          Exports include layouts, watchlists, private notes, trade history, and
+          sensitive tax/income assumptions in plain text. Store backups securely
           before clearing browser data.
         </p>
         {error && (

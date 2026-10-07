@@ -1,6 +1,11 @@
 "use client";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import useSWR from "swr";
+import { AnalystWidget } from "./analyst-widget";
+import { TradesWidget } from "./trades-widget";
+import Link from "next/link";
+import { TradeEditor, TradeDialog } from "./trade-dialog";
+import { calculatePosition } from "@/lib/portfolio";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -250,6 +255,8 @@ export function WidgetContent(props: Props) {
   switch (widget.type) {
     case "watchlist":
       return <WatchlistWidget {...props} />;
+    case "trades":
+      return <TradesWidget workspace={props.workspace} update={props.update} />;
     case "market":
       return <MarketWidget {...props} />;
     case "movers":
@@ -260,6 +267,8 @@ export function WidgetContent(props: Props) {
       return <QuoteWidget {...props} />;
     case "metrics":
       return <MetricsWidget {...props} />;
+    case "analyst":
+      return <AnalystWidget {...props} />;
     case "news":
       return props.widget.newsScope === "market" ? (
         <MarketNewsWidget {...props} />
@@ -516,13 +525,20 @@ function MarketNewsWidget(props: Props) {
     </div>
   );
 }
-function WatchlistWidget(props: Props) {
+export function WatchlistWidget(props: Props & { editor?: boolean }) {
   const { widget, workspace, update } = props;
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
+  const [tradeSymbol, setTradeSymbol] = useState<string | null>(null);
   const list =
     workspace.watchlists.find((l) => l.id === widget.watchlistId) ??
     workspace.watchlists[0];
+  const editorHeading = useRef<HTMLHeadingElement>(null);
+  const selectedSymbol =
+    tradeSymbol && list.symbols.includes(tradeSymbol) ? tradeSymbol : null;
+  useEffect(() => {
+    if (props.editor && selectedSymbol) editorHeading.current?.focus();
+  }, [props.editor, selectedSymbol]);
   // One SWR batch key, individual server calls still use the shared provider cache.
   const { data, isLoading, mutate } = useSWR(
     ["watchlist", list.symbols.join(","), workspace.dataMode],
@@ -543,7 +559,9 @@ function WatchlistWidget(props: Props) {
       ),
     { revalidateOnFocus: false, refreshInterval: 300000 },
   );
-  const sorted = [...(data ?? [])].sort((a, b) =>
+  const sorted = [
+    ...(data ?? list.symbols.map((symbol) => ({ symbol, result: null }))),
+  ].sort((a, b) =>
     widget.sort === "symbol"
       ? a.symbol.localeCompare(b.symbol)
       : widget.sort === "price"
@@ -568,9 +586,12 @@ function WatchlistWidget(props: Props) {
     }));
     setDraft("");
     setError("");
+    if (props.editor) setTradeSymbol(result.data);
   }
   return (
-    <div className="watchlist-content">
+    <div
+      className={`watchlist-content ${props.editor ? "watchlist-editor-content" : ""}`}
+    >
       <div className="widget-toolbar">
         <select
           aria-label="Selected watchlist"
@@ -586,7 +607,47 @@ function WatchlistWidget(props: Props) {
           ))}
         </select>
         <span className="muted">{list.symbols.length} symbols</span>
+        {!props.editor && (
+          <Link
+            className="text-button"
+            href={`/watchlist/${encodeURIComponent(list.id)}`}
+          >
+            Edit watchlist <External size={12} />
+          </Link>
+        )}
+        {!props.editor && (
+          <button
+            className="text-button"
+            aria-pressed={widget.showPositions}
+            onClick={() =>
+              props.patchWidget({
+                ...widget,
+                showPositions: !widget.showPositions,
+              })
+            }
+          >
+            {widget.showPositions ? "Show prices" : "Show positions"}
+          </button>
+        )}
       </div>
+      <form className="add-symbol" onSubmit={add}>
+        <Plus size={15} />
+        <input
+          aria-label="Add ticker to watchlist"
+          placeholder="Add a symbol, e.g. NFLX"
+          value={draft}
+          maxLength={15}
+          onChange={(e) => setDraft(e.target.value.toUpperCase())}
+        />
+        <button className="text-button" type="submit">
+          Add
+        </button>
+      </form>
+      {error && (
+        <p className="field-error" role="alert">
+          {error}
+        </p>
+      )}
       <div className="table-scroll">
         <table className="watch-table">
           <thead>
@@ -618,8 +679,19 @@ function WatchlistWidget(props: Props) {
                   Change %
                 </button>
               </th>
-              {widget.showChart && <th>Trend</th>}
-              {widget.showVolume && <th>Volume</th>}
+              {widget.showPositions ? (
+                <>
+                  <th>Shares</th>
+                  <th>Avg. cost</th>
+                  {props.editor && <th>Cost basis</th>}
+                </>
+              ) : (
+                <>
+                  {widget.showChart && <th>Trend</th>}
+                  {widget.showVolume && <th>Volume</th>}
+                </>
+              )}
+              <th>Position</th>
               <th>
                 <span className="sr-only">Remove</span>
               </th>
@@ -668,7 +740,31 @@ function WatchlistWidget(props: Props) {
                 >
                   {result ? percent(result.data.changePercent) : "—"}
                 </td>
-                {widget.showChart && (
+                {widget.showPositions && (
+                  <>
+                    <td>
+                      {
+                        calculatePosition(workspace.trades[symbol] ?? [])
+                          .quantity
+                      }
+                    </td>
+                    <td>
+                      {money(
+                        calculatePosition(workspace.trades[symbol] ?? [])
+                          .averageCost,
+                      )}
+                    </td>
+                    {props.editor && (
+                      <td>
+                        {money(
+                          calculatePosition(workspace.trades[symbol] ?? [])
+                            .basis,
+                        )}
+                      </td>
+                    )}
+                  </>
+                )}
+                {!widget.showPositions && widget.showChart && (
                   <td>
                     {result && (
                       <Sparkline
@@ -678,11 +774,20 @@ function WatchlistWidget(props: Props) {
                     )}
                   </td>
                 )}
-                {widget.showVolume && (
+                {!widget.showPositions && widget.showVolume && (
                   <td className="muted">
                     {result ? compact(result.data.volume) : "—"}
                   </td>
                 )}
+                <td>
+                  <button
+                    className="text-button"
+                    aria-label={`${props.editor ? "Edit cost basis" : "Trades"} for ${symbol}`}
+                    onClick={() => setTradeSymbol(symbol)}
+                  >
+                    {props.editor ? "Edit cost basis" : "Trades"}
+                  </button>
+                </td>
                 <td>
                   <button
                     className="row-remove icon-button"
@@ -708,34 +813,50 @@ function WatchlistWidget(props: Props) {
             ))}
           </tbody>
         </table>
+        {!props.editor && tradeSymbol && (
+          <TradeDialog
+            key={tradeSymbol}
+            symbol={tradeSymbol}
+            workspace={workspace}
+            update={update}
+            quote={data?.find((r) => r.symbol === tradeSymbol)?.result ?? null}
+            onClose={() => setTradeSymbol(null)}
+          />
+        )}
         {isLoading && <DataState />}
         {!isLoading && !list.symbols.length && (
           <div className="empty-inline">
-            Your next idea starts here. Add a ticker below.
+            Your next idea starts here. Add a ticker to get started.
           </div>
         )}
       </div>
-      <form className="add-symbol" onSubmit={add}>
-        <Plus size={15} />
-        <input
-          aria-label="Add ticker to watchlist"
-          placeholder="Add a symbol, e.g. NFLX"
-          value={draft}
-          maxLength={15}
-          onChange={(e) => setDraft(e.target.value.toUpperCase())}
-        />
-        <button className="text-button" type="submit">
-          Add
-        </button>
-      </form>
-      {error && (
-        <p className="field-error" role="alert">
-          {error}
-        </p>
-      )}
       <div className="widget-footnote">
         Quotes refresh every 5 min · Hover a source label for its timestamp
       </div>
+      {props.editor && selectedSymbol && (
+        <section
+          className="watchlist-cost-editor"
+          aria-labelledby="cost-editor-heading"
+        >
+          <h2 id="cost-editor-heading" ref={editorHeading} tabIndex={-1}>
+            {selectedSymbol} · Cost basis
+          </h2>
+          <p className="muted">
+            Enter each purchase date, shares, price per share, and any fees. Add
+            sales to keep your remaining shares and cost basis up to date.
+          </p>
+          <TradeEditor
+            key={selectedSymbol}
+            symbol={selectedSymbol}
+            workspace={workspace}
+            update={update}
+            quote={
+              data?.find((r) => r.symbol === selectedSymbol)?.result ?? null
+            }
+            costBasisOnly
+          />
+        </section>
+      )}
     </div>
   );
 }

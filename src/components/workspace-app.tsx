@@ -57,6 +57,7 @@ import {
   WorkspaceSettings,
 } from "./workspace-dialogs";
 import { Modal } from "./modal";
+import { WatchlistPage } from "./watchlist-page";
 
 export function WorkspaceApp() {
   const { workspace, error, update } = useWorkspace();
@@ -93,6 +94,12 @@ function WorkspaceShell({
   const newsSector =
     parts[0] === "news" && parts.length <= 2
       ? sectorIds.find((id) => id === (parts[1] ?? "all"))
+      : undefined;
+  const watchlist =
+    parts[0] === "watchlist" && parts.length === 2
+      ? workspace.watchlists.find(
+          (list) => encodeURIComponent(list.id) === parts[1],
+        )
       : undefined;
   const pageId =
     parts.length === 0
@@ -281,6 +288,17 @@ function WorkspaceShell({
         </div>
         <nav aria-label="Dashboards">
           <button
+            className={`nav-item ${watchlist ? "selected" : ""}`}
+            onClick={() =>
+              navigate(
+                `/watchlist/${encodeURIComponent(workspace.watchlists[0].id)}`,
+              )
+            }
+          >
+            <Bookmark size={17} />
+            <span>Watchlists</span>
+          </button>
+          <button
             className={`nav-item ${newsSector ? "selected" : ""}`}
             onClick={() => navigate("/news")}
           >
@@ -395,7 +413,9 @@ function WorkspaceShell({
             <LayoutGrid size={15} />
             <span>Workspace</span>
             <span className="breadcrumb-divider">/</span>
-            <strong>{symbol ?? page?.name ?? "Not found"}</strong>
+            <strong>
+              {watchlist?.name ?? symbol ?? page?.name ?? "Not found"}
+            </strong>
           </div>
           <div className="topbar-right">
             <span className="local-status">
@@ -414,7 +434,22 @@ function WorkspaceShell({
           </div>
         </header>
         <main className="main-content">
-          {!page ? (
+          {watchlist ? (
+            <>
+              {storageError && (
+                <div className="warning-banner" role="alert">
+                  {storageError}
+                </div>
+              )}
+              <WatchlistPage
+                key={watchlist.id}
+                list={watchlist}
+                workspace={workspace}
+                update={update}
+                navigate={navigate}
+              />
+            </>
+          ) : !page ? (
             <div className="empty-page">
               <LayoutGrid size={36} />
               <h1>This page isn’t in your workspace</h1>
@@ -835,7 +870,7 @@ function DashboardGrid({
           isDraggable={editing && !mobile}
           isResizable={editing && !mobile}
           draggableHandle=".widget-drag-handle"
-          draggableCancel="button,input,select,textarea"
+          draggableCancel="button,a,input,select,textarea"
           onDragStart={rememberLayout}
           onResizeStart={rememberLayout}
           onDragStop={(_layout, _oldItem, item) => {
@@ -868,7 +903,18 @@ function DashboardGrid({
                   ) : (
                     <LayoutGrid size={14} />
                   )}
-                  <h2>{widget.title}</h2>
+                  <h2>
+                    {widget.type === "watchlist" && !editing ? (
+                      <Link
+                        className="widget-title-link"
+                        href={`/watchlist/${encodeURIComponent((workspace.watchlists.find((list) => list.id === widget.watchlistId) ?? workspace.watchlists[0]).id)}`}
+                      >
+                        {widget.title}
+                      </Link>
+                    ) : (
+                      widget.title
+                    )}
+                  </h2>
                 </div>
                 <div className="widget-controls">
                   <button

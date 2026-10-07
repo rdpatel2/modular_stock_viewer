@@ -5,7 +5,8 @@ import {
   demoFundamentals,
   DEMO_AS_OF,
 } from "./demo";
-import { yahooFundamentals } from "./fundamentals";
+import { yahooFundamentals, yahooSummary } from "./fundamentals";
+import { parseAnalyst, type AnalystData } from "./analyst";
 import { marketNews, demoMarketNews, type MarketNews } from "./market-news";
 import type { Fundamentals } from "./research";
 import { nasdaqEarnings, yahooNews, yahooProvider } from "./providers";
@@ -97,6 +98,30 @@ export function getMarketNews(mode: string): Promise<DataEnvelope<MarketNews>> {
     "Yahoo Finance / CNBC RSS",
     marketNews,
     demoMarketNews,
+  );
+}
+export function getAnalyst(
+  symbol: string,
+  mode: string,
+): Promise<DataEnvelope<AnalystData>> {
+  return withFallback(
+    `analyst:${symbol}`,
+    mode,
+    "Yahoo Finance analyst recommendations",
+    async () =>
+      parseAnalyst(await yahooSummary(symbol, "recommendationTrend"), symbol),
+    () => {
+      demoQuote(symbol, "1d"); // Unknown symbols are never assigned made-up coverage.
+      return {
+        symbol,
+        periods: ["SPY", "QQQ", "DIA", "IWM"].includes(symbol)
+          ? []
+          : [
+              { period: "0m", counts: [1, 2, 8, 14, 9] },
+              { period: "-1m", counts: [1, 3, 10, 13, 7] },
+            ],
+      };
+    },
   );
 }
 export function getNews(
